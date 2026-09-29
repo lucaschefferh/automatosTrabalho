@@ -1,0 +1,12 @@
+{
+  "_comentario": "EXEMPLO PROVISÓRIO (palavras sobre {a,b} terminadas em 'ab'). Substitua pelo AFND sorteado. Use \"ε\" como chave para transições epsilon.",
+  "estados": ["q0", "q1", "q2"],
+  "alfabeto": ["a", "b"],
+  "inicial": "q0",
+  "finais": ["q2"],
+  "transicoes": {
+    "q0": {"a": ["q0", "q1"], "b": ["q0"]},
+    "q1": {"b": ["q2"]},
+    "q2": {}
+  }
+}
