@@ -2,7 +2,6 @@
 (eliminação de estados) e simuladores. Não depende de interface gráfica."""
 import json
 import re
-from itertools import product
 
 EPS = "ε"
 
@@ -34,31 +33,10 @@ def fecho_epsilon(afnd, conjunto):
     return fecho
 
 
-def aceita_afnd(afnd, palavra):
-    atuais = fecho_epsilon(afnd, {afnd["inicial"]})
-    for c in palavra:
-        atuais = fecho_epsilon(afnd, _mover(afnd, atuais, c))
-    return bool(atuais & set(afnd["finais"]))
-
-
 # ------------------------------------------------- AFND -> AFD (subconjuntos)
 def nome_conjunto(afnd, conj):
     ordem = {s: i for i, s in enumerate(afnd["estados"])}
     return "{" + ",".join(sorted(conj, key=ordem.get)) + "}" if conj else "∅"
-
-
-def tabela_fecho(afnd):
-    return {s: nome_conjunto(afnd, fecho_epsilon(afnd, {s})) for s in afnd["estados"]}
-
-
-def trace_afnd(afnd, palavra):
-    """Conjuntos de estados ativos do AFND antes de ler e após cada símbolo."""
-    atuais = fecho_epsilon(afnd, {afnd["inicial"]})
-    conjuntos = [atuais]
-    for c in palavra:
-        atuais = fecho_epsilon(afnd, _mover(afnd, atuais, c))
-        conjuntos.append(atuais)
-    return conjuntos
 
 
 def construir_afd(afnd):
@@ -174,17 +152,14 @@ IN, OUT = "«início»", "«fim»"
 
 
 def automato_para_regex(estados, inicial, finais, arestas):
-    """Eliminação de estados sobre um autômato generalizado.
-    arestas: lista de (origem, rótulo, destino); rótulo '' = ε.
-    Retorna (regex, passos); cada passo guarda o estado eliminado e a tabela R."""
+    """Gera a expressão regular por eliminação de estados; '' representa ε."""
     frente, tras = {}, {}
     for s, _r, t in arestas:
         frente.setdefault(s, []).append(t)
         tras.setdefault(t, []).append(s)
     uteis = _alcancaveis([inicial], frente) & _alcancaveis(finais, tras)
     if inicial not in uteis:
-        return "∅", [{"titulo": "Nenhum estado final é alcançável: linguagem vazia (∅).",
-                      "removido": None, "R": {}, "nos": []}]
+        return "∅"
     R = {}
 
     def add(i, j, r):
@@ -200,9 +175,6 @@ def automato_para_regex(estados, inicial, finais, arestas):
 
     restantes = [s for s in estados if s in uteis]
     nos = [IN] + restantes + [OUT]
-    passos = [{"titulo": "Autômato generalizado: novo estado inicial e novo estado final, "
-                         "transições paralelas unidas com |",
-               "removido": None, "R": dict(R), "nos": list(nos)}]
     for q in restantes:
         nos.remove(q)
         laco = _estrela(R.pop((q, q), None))
@@ -211,55 +183,18 @@ def automato_para_regex(estados, inicial, finais, arestas):
         for i, ri in entradas:
             for j, rj in saidas:
                 add(i, j, _cat(_cat(ri, laco), rj))
-        passos.append({"titulo": f"Eliminando {q}: para cada entrada i→{q} e saída {q}→j, "
-                                 f"cria i→j com  (i→{q})(laço de {q})*(({q}→j))",
-                       "removido": q, "R": dict(R), "nos": list(nos)})
     r = R.get((IN, OUT))
-    return ("∅" if r is None else r), passos
-
-
-def afnd_para_regex(afnd):
-    """ER obtida diretamente do AFND (ε vira rótulo vazio). Retorna (regex, passos)."""
-    arestas = [(s, "" if a == EPS else a, t)
-               for s, trans in afnd["transicoes"].items()
-               for a, destinos in trans.items() for t in destinos]
-    return automato_para_regex(afnd["estados"], afnd["inicial"], afnd["finais"], arestas)
+    return "∅" if r is None else r
 
 
 def afd_para_regex(afd):
     """Retorna a ER como string compatível com re.fullmatch ('∅' = linguagem vazia)."""
     arestas = [(s, a, t) for (s, a), t in afd["delta"].items()]
-    return automato_para_regex(afd["estados"], afd["inicial"], afd["finais"], arestas)[0]
+    return automato_para_regex(afd["estados"], afd["inicial"], afd["finais"], arestas)
 
 
 def aceita_regex(regex, palavra):
     return regex != "∅" and re.fullmatch(regex, palavra) is not None
-
-
-# ------------------------------------------------------------- verificação
-def verificar_equivalencia(afnd, afd, regex, max_len=8):
-    """Compara AFND, AFD e ER em todas as palavras até max_len. Retorna divergências."""
-    divergentes = []
-    for n in range(max_len + 1):
-        for tupla in product(afnd["alfabeto"], repeat=n):
-            w = "".join(tupla)
-            r1, r2, r3 = (aceita_afnd(afnd, w), simular(afd, w)[1],
-                          aceita_regex(regex, w))
-            if not (r1 == r2 == r3):
-                divergentes.append((w, r1, r2, r3))
-    return divergentes
-
-
-def verificar_regex(afnd, regex, max_len=8):
-    """Palavras (até max_len) em que a ER e o AFND discordam."""
-    divergentes = []
-    for n in range(max_len + 1):
-        for tupla in product(afnd["alfabeto"], repeat=n):
-            w = "".join(tupla)
-            esperado, obtido = aceita_afnd(afnd, w), aceita_regex(regex, w)
-            if esperado != obtido:
-                divergentes.append((w, esperado, obtido))
-    return divergentes
 
 
 def ler_sentencas(caminho):
