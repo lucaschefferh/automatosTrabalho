@@ -1,7 +1,7 @@
 """Ferramenta de AFND -> AFD e Expressão Regular.  Rodar com:  streamlit run app.py
 
 Abas: 1) entrada do AFND  2) construção do AFD passo a passo
-      3) comparação AFND × AFD  4) expressão regular"""
+      3) teste de sentenças  4) expressão regular"""
 import json
 import time
 
@@ -77,8 +77,7 @@ def afd_dot(afd, ativo=None, aresta=None, visiveis=None, novo=None):
 def preparar(texto_json):
     afnd = json.loads(texto_json)
     afd = construir_afd(afnd)
-    regex, passos_re = afnd_para_regex(afnd)
-    return afd, regex, passos_re, tabela_fecho(afnd)
+    return afd, afnd_para_regex(afnd), tabela_fecho(afnd)
 
 
 def ler_texto(texto):
@@ -90,7 +89,7 @@ def selo(ok):
 
 
 def texto_regex(r):
-    return "∅ (linguagem vazia)" if r == "∅" else (r or "ε (apenas a palavra vazia)")
+    return "∅ (linguagem vazia)" if r == "∅" else r
 
 
 def mover_passo(chave, delta, n):
@@ -131,7 +130,7 @@ base, v = _arq, 0
 st.title("AFND → AFD e Expressão Regular")
 aba1, aba2, aba3, aba4 = st.tabs(
     ["Entrada (AFND)", "Equivalência: construção do AFD",
-     "Comparar AFND × AFD", "Expressão regular"])
+     "Testar sentenças", "Expressão regular"])
 
 # ------------------------------------------------------ 1. entrada do AFND
 erros = []
@@ -212,23 +211,33 @@ with aba1:
 if erros:
     st.stop()
 
-afd, regex, _passos_re, fechos = preparar(texto_json)
+afd, regex, fechos = preparar(texto_json)
 
 # ----------------------------------------------- 2. construção passo a passo
 with aba2:
-    with st.expander("Como funciona a construção de subconjuntos", expanded=False):
-        st.markdown(
-            "1. O **estado inicial do AFD** é o ε-fecho do estado inicial do AFND.\n"
-            "2. Para cada estado do AFD *S* (um **conjunto** de estados do AFND) e cada símbolo *a*: "
-            "`mover(S, a)` = estados alcançáveis por *a* a partir de qualquer estado de *S*; "
-            "depois aplica-se o **ε-fecho**.\n"
-            "3. O conjunto obtido é o destino δ(S, a). Se ainda não existe, vira um novo estado do AFD.\n"
-            "4. Repete-se até não surgirem estados novos. O conjunto vazio ∅ é o estado de erro.\n"
-            "5. Um estado do AFD é **final** se contém algum estado final do AFND.")
-    if any(EPS in t for t in transicoes.values()):
-        st.markdown("**ε-fecho de cada estado do AFND**")
-        st.dataframe(pd.DataFrame({"Estado": list(fechos), "ε-fecho": list(fechos.values())}),
-                     hide_index=True)
+    def marcar(s, ini, fin):
+        return ("→ " if s == ini else "") + ("* " if s in fin else "") + s
+
+    cols = afnd["alfabeto"] + ([EPS] if any(EPS in t for t in transicoes.values()) else [])
+    c_afnd, c_fecho = st.columns(2)
+    c_afnd.markdown("**Tabela de transição do AFND**")
+    df_afnd = pd.DataFrame(
+        [["{" + ",".join(transicoes[s][a]) + "}" if a in transicoes[s] else "∅" for a in cols]
+         for s in afnd["estados"]],
+        index=[marcar(s, afnd["inicial"], afnd["finais"]) for s in afnd["estados"]], columns=cols)
+    c_afnd.dataframe(df_afnd, width="stretch")
+    c_afnd.caption("→ estado inicial · * estado final · ∅ sem transição")
+
+    c_fecho.markdown("**ε-fecho de cada estado do AFND**")
+    c_fecho.dataframe(pd.DataFrame({"Estado": list(fechos), "ε-fecho": list(fechos.values())}),
+                      hide_index=True, width="stretch")
+
+    st.markdown("**Nova tabela de transição (AFD)**")
+    tab = {s: {a: afd["delta"].get((s, a), "—") for a in afd["alfabeto"]} for s in afd["estados"]}
+    df = pd.DataFrame(tab).T
+    df.index = [marcar(s, afd["inicial"], afd["finais"]) for s in df.index]
+    st.dataframe(df, width="stretch")
+    st.caption("→ estado inicial · * estado final (contém algum final do AFND) · — sem transição")
 
     N = len(afd["passos"])
     k, play = controles("k_constr", N, texto_json, "Passo da construção")
@@ -266,30 +275,10 @@ with aba2:
     else:
         desenhar_constr(k)
 
-    st.markdown("**Resultado: tabela de transição do AFD**")
-    tab = {s: {a: afd["delta"][(s, a)] for a in afd["alfabeto"]} for s in afd["estados"]}
-    df = pd.DataFrame(tab).T
-    df.index = [("→ " if s == afd["inicial"] else "") + ("* " if s in afd["finais"] else "") + s
-                for s in df.index]
-    st.dataframe(df, width="stretch")
-    st.caption("→ estado inicial · * estado final (contém algum final do AFND)")
-
-# ------------------------------------------------------------ 3. comparação
+# ------------------------------------------------------------ 3. sentenças
 with aba3:
-    e1, e2 = st.columns(2)
-    e1.markdown("**AFND**")
-    e1.graphviz_chart(afnd_dot(afnd), width="stretch")
-    e2.markdown("**AFD equivalente**")
-    e2.graphviz_chart(afd_dot(afd), width="stretch")
-
-    st.divider()
-    arquivo = st.file_uploader("Arquivo de sentenças (.txt, uma por linha) — sem ele usa entrada.txt",
-                               type="txt")
-    if arquivo:
-        sentencas = ler_texto(arquivo.getvalue().decode("utf-8"))
-    else:
-        with open("entrada.txt", encoding="utf-8") as f:
-            sentencas = ler_texto(f.read())
+    arquivo = st.file_uploader("Arquivo de sentenças (.txt, uma por linha)", type="txt")
+    sentencas = ler_texto(arquivo.getvalue().decode("utf-8")) if arquivo else []
     if sentencas:
         st.dataframe(pd.DataFrame([{
             "#": i + 1, "Sentença": s or EPS,
@@ -298,11 +287,67 @@ with aba3:
         validas = sum(simular(afd, s)[1] for s in sentencas)
         st.caption(f"{validas} aceitas e {len(sentencas) - validas} rejeitadas pelo AFD.")
 
+    st.divider()
+    st.subheader("Execução passo a passo do AFD")
+    escolhida = (st.selectbox("Sentença do arquivo", range(len(sentencas)),
+                              format_func=lambda i: f"{i + 1}. {sentencas[i] or EPS}")
+                 if sentencas else None)
+    digitada = st.text_input("Ou digite uma sentença (tem prioridade sobre a do arquivo)",
+                             key="exec_digitada").strip()
+    palavra = digitada if digitada else (sentencas[escolhida] if sentencas else None)
+
+    if palavra is None:
+        st.info("Envie um arquivo de sentenças ou digite uma sentença para ver a execução.")
+    else:
+        caminho, aceita = simular(afd, palavra)
+        M = len(caminho)
+        k2, play2 = controles("k_exec", M, (texto_json, palavra), "Símbolos lidos")
+        st.markdown(f"**Sentença:** `{palavra or EPS}`")
+        g_exec, fita, nota = st.empty(), st.empty(), st.empty()
+
+        def estado_apos(k):
+            return afd["inicial"] if k == 0 else caminho[k - 1][2]
+
+        def desenhar_exec(k):
+            atual = estado_apos(k)
+            aresta = (caminho[k - 1][0], atual) if k > 0 and atual else None
+            g_exec.graphviz_chart(afd_dot(afd, ativo=atual, aresta=aresta), width="stretch")
+            lido = palavra[:k - 1] if k else ""
+            fita.markdown(
+                (f":gray[{lido}]" if lido else "")
+                + (f" :red[**{palavra[k - 1]}**]" if k else "")
+                + (f" {palavra[k:]}" if palavra[k:] else "")
+                + ("" if palavra else "ε (palavra vazia)"))
+            if k == 0:
+                nota.info(f"Início no estado inicial **{atual}**.")
+                final = M == 0
+            else:
+                o, c, d = caminho[k - 1]
+                if d is None:
+                    nota.error(f"**Passo {k}/{M}** — δ({o}, {c}) não existe: "
+                               "o autômato trava e a sentença é rejeitada.")
+                else:
+                    nota.markdown(f"**Passo {k}/{M}** — lê **{c}**: δ({o}, {c}) = **{d}**")
+                final = k == M
+            if final:
+                if aceita:
+                    st.success(f"Fim da sentença em **{atual}**, que é final: ACEITA.")
+                elif atual is None:
+                    st.error("Sentença REJEITADA (transição inexistente).")
+                else:
+                    st.error(f"Fim da sentença em **{atual}**, que não é final: REJEITADA.")
+
+        if play2:
+            reproduzir(M, desenhar_exec)
+        else:
+            desenhar_exec(k2)
+
 # ------------------------------------------------------------------- 4. ER
 with aba4:
     st.subheader("Expressão regular do autômato")
     st.code(texto_regex(regex), language="text")
-    st.caption("Obtida por **eliminação de estados** diretamente sobre o AFND digitado.")
+    st.caption("Obtida por **eliminação de estados** sobre o AFND digitado. "
+               "Operadores: `+` união · justaposição = concatenação · `*` estrela · `( )` agrupamento · ε palavra vazia.")
 
     st.divider()
     st.subheader("Testar uma palavra na ER")
